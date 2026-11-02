@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
 
 import io.kestra.core.junit.annotations.KestraTest;
@@ -37,6 +38,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 
@@ -54,6 +56,7 @@ class ChatCompletionCapabilitiesTest {
     private String contentType;
     private int status;
     private CountDownLatch streamRelease;
+    private CountDownLatch responseStarted;
 
     @BeforeEach
     void startServer() throws Exception {
@@ -63,6 +66,7 @@ class ChatCompletionCapabilitiesTest {
         response = message("[{\"type\":\"text\",\"text\":\"Hello\",\"citations\":null}]");
         contentType = "application/json";
         status = 200;
+        responseStarted = new CountDownLatch(1);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange ->
         {
@@ -74,6 +78,7 @@ class ChatCompletionCapabilitiesTest {
             exchange.sendResponseHeaders(status, streamRelease == null ? bytes.length : 0);
             exchange.getResponseBody().write(bytes);
             exchange.getResponseBody().flush();
+            responseStarted.countDown();
             if (streamRelease != null) {
                 try {
                     streamRelease.await(30, TimeUnit.SECONDS);
@@ -281,7 +286,7 @@ class ChatCompletionCapabilitiesTest {
     }
 
     @Test
-    void shouldRenderDocumentedYamlExamples() throws Exception {
+    void shouldRunDocumentedYamlExamplesAgainstLocalApi() throws Exception {
         var examples = ChatCompletion.class.getAnnotation(Plugin.class).examples();
         var context = runContextFactory.of(
             Map.of(
@@ -292,10 +297,24 @@ class ChatCompletionCapabilitiesTest {
         );
         for (int i = examples.length - 4; i < examples.length; i++) {
             var flow = JacksonMapper.ofYaml().readTree(String.join("\n", examples[i].code()));
-            var task = JacksonMapper.ofJson().treeToValue(flow.path("tasks").path(0), ChatCompletion.class);
-            var params = task.createParams(context);
-            assertThat(params.messages(), not(empty()));
+            var taskNode = (ObjectNode) flow.path("tasks").path(0);
+            taskNode.put("id", "example_" + UUID.randomUUID().toString().replace("-", ""));
+            taskNode.put("apiKey", "test-key");
+            taskNode.put("baseUrl", baseUrl);
+            taskNode.put("maxRetries", 0);
+            if (taskNode.path("stream").asBoolean()) {
+                contentType = "text/event-stream";
+                response = textStreamStart() + textDelta("Hello") + textStreamEnd();
+            } else {
+                contentType = "application/json";
+                response = message("[{\"type\":\"text\",\"text\":\"Hello\"}]");
+            }
+            var task = JacksonMapper.ofJson().treeToValue(taskNode, ChatCompletion.class);
+            var output = task.run(context);
+            assertThat(output.getOutputText(), is("Hello"));
+            assertThat(requests.getLast().path("messages").size(), greaterThan(0));
         }
+        assertThat(requests, hasSize(4));
     }
 
     @Test
@@ -391,37 +410,57 @@ class ChatCompletionCapabilitiesTest {
 
     @Test
     void shouldCancelAnOpenStreamWhenKilled() throws Exception {
-        contentType = "text/event-stream";
+        assertCancellation(true, false);
+    }
+
+    @Test
+    void shouldCancelANonStreamingCallWhenKilled() throws Exception {
+        assertCancellation(false, false);
+    }
+
+    @Test
+    void shouldLogClientCloseFailureWithoutThrowingFromKill() throws Exception {
+        assertCancellation(false, true);
+    }
+
+    private void assertCancellation(boolean rStream, boolean failOnClose) throws Exception {
+        contentType = rStream ? "text/event-stream" : "application/json";
         streamRelease = new CountDownLatch(1);
-        response = textStreamStart() + textDelta("started\n");
-        var started = new CountDownLatch(1);
-        var context = spy(runContextFactory.of());
-        var logger = mock(Logger.class);
-        doReturn(logger).when(context).logger();
-        doAnswer(invocation ->
-        {
-            started.countDown();
-            return null;
-        }).when(logger).info(eq("{}"), any(Object.class));
-        var task = task().stream(Property.ofValue(true)).build();
+        response = rStream ? textStreamStart() + textDelta("started\n") : "{\"id\":\"msg_waiting\",";
+        var warnings = new CopyOnWriteArrayList<String>();
+        var context = loggingContext(new CopyOnWriteArrayList<>(), warnings);
+        var task = spy(task().stream(Property.ofValue(rStream)).build());
+        var realClient = task.buildClient(context, "test-key");
+        var client = spy(realClient);
+        if (failOnClose) {
+            doThrow(new IllegalStateException("sensitive-client-detail")).when(client).close();
+        }
+        doReturn(client).when(task).buildClient(context, "test-key");
         try (var executor = Executors.newCachedThreadPool()) {
             var execution = executor.submit(() -> task.run(context));
             try {
-                assertThat(started.await(20, TimeUnit.SECONDS), is(true));
+                assertThat(responseStarted.await(20, TimeUnit.SECONDS), is(true));
                 var cancellation = executor.submit(task::kill);
                 cancellation.get(5, TimeUnit.SECONDS);
                 assertThrows(ExecutionException.class, () -> execution.get(5, TimeUnit.SECONDS));
                 task.kill();
                 assertThat(requests, hasSize(1));
+                assertThat(requests.getFirst().path("stream").asBoolean(), is(rStream));
+                if (failOnClose) {
+                    assertThat(warnings, hasItem(containsString("Unable to close Anthropic client while killing the task")));
+                    assertThat(warnings.toString(), not(containsString("sensitive-client-detail")));
+                }
             } finally {
                 streamRelease.countDown();
                 execution.cancel(true);
             }
+        } finally {
+            realClient.close();
         }
     }
 
     @Test
-    void shouldRejectEnumTyposAndKeepLowercaseYamlValues() throws Exception {
+    void shouldRejectEnumTyposAndAcceptUppercaseAndLowercaseYamlValues() throws Exception {
         var mapper = JacksonMapper.ofYaml();
         for (String invalid : List.of(
             "type: typo\ntext: hello",
@@ -433,14 +472,30 @@ class ChatCompletionCapabilitiesTest {
         assertThrows(Exception.class, () -> mapper.readValue("type: USER\ncontent: hello\ncacheControl: typo", ChatCompletion.ChatMessage.class));
         assertThrows(Exception.class, () -> mapper.readValue("text: hello\ncacheControl: typo", ChatCompletion.SystemPromptBlock.class));
         assertThrows(Exception.class, () -> mapper.readValue("name: extract\ncacheControl: typo", ChatCompletion.Tool.class));
-        var block = mapper.readValue("type: image\nsource: {type: url, url: 'https://example.com/image.png'}\ncacheControl: ephemeral", ChatCompletion.ContentBlock.class);
-        assertThat(block.type(), is(ChatCompletion.ContentBlockType.IMAGE));
-        assertThat(block.source().type(), is(ChatCompletion.ContentSourceType.URL));
-        assertThat(block.cacheControl(), is(ChatCompletion.CacheControl.EPHEMERAL));
-        var serialized = JacksonMapper.ofJson().valueToTree(block);
-        assertThat(serialized.path("type").asText(), is("image"));
-        assertThat(serialized.path("source").path("type").asText(), is("url"));
-        assertThat(serialized.path("cacheControl").asText(), is("ephemeral"));
+        for (String yaml : List.of(
+            "type: IMAGE\nsource: {type: URL, url: 'https://example.com/image.png'}\ncacheControl: EPHEMERAL",
+            "type: image\nsource: {type: url, url: 'https://example.com/image.png'}\ncacheControl: ephemeral"
+        )) {
+            var block = mapper.readValue(yaml, ChatCompletion.ContentBlock.class);
+            assertThat(block.type(), is(ChatCompletion.ContentBlockType.IMAGE));
+            assertThat(block.source().type(), is(ChatCompletion.ContentSourceType.URL));
+            assertThat(block.cacheControl(), is(ChatCompletion.CacheControl.EPHEMERAL));
+            var serialized = JacksonMapper.ofJson().valueToTree(block);
+            assertThat(serialized.path("type").asText(), is("IMAGE"));
+            assertThat(serialized.path("source").path("type").asText(), is("URL"));
+            assertThat(serialized.path("cacheControl").asText(), is("EPHEMERAL"));
+            task().messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block)))))
+                .build().run(runContextFactory.of());
+            assertThat(requests.getLast().path("messages").path(0).path("content").path(0).path("type").asText(), is("image"));
+        }
+        for (var type : ChatCompletion.ContentBlockType.values()) {
+            assertThat(mapper.readValue(type.name(), ChatCompletion.ContentBlockType.class), is(type));
+            assertThat(mapper.readValue(type.name().toLowerCase(java.util.Locale.ROOT), ChatCompletion.ContentBlockType.class), is(type));
+        }
+        for (var type : ChatCompletion.ContentSourceType.values()) {
+            assertThat(mapper.readValue(type.name(), ChatCompletion.ContentSourceType.class), is(type));
+            assertThat(mapper.readValue(type.name().toLowerCase(java.util.Locale.ROOT), ChatCompletion.ContentSourceType.class), is(type));
+        }
     }
 
     private RunContext loggingContext(List<String> lines, List<String> warnings) {

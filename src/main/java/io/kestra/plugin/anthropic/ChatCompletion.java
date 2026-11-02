@@ -30,7 +30,6 @@ import com.anthropic.models.messages.ToolChoiceTool;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
@@ -481,6 +480,11 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     @EqualsAndHashCode.Exclude
     private transient volatile boolean killed;
 
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private transient volatile org.slf4j.Logger activeLogger;
+
     @Override
     public Output run(RunContext runContext) throws Exception {
         var params = createParams(runContext);
@@ -488,17 +492,13 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             .orElseThrow(() -> new IllegalArgumentException("apiKey is required"));
         var rStream = runContext.render(stream).as(Boolean.class).orElse(false);
         var client = buildClient(runContext, rApiKey);
+        this.activeLogger = runContext.logger();
         this.activeClient = client;
         try {
             if (killed) {
                 throw new InterruptedException("Chat completion was killed");
             }
-            Message response;
-            if (rStream) {
-                response = streamResponse(runContext, client, params);
-            } else {
-                response = client.messages().create(params);
-            }
+            var response = requestResponse(runContext, client, params, rStream);
             if (killed) {
                 throw new InterruptedException("Chat completion was killed");
             }
@@ -506,6 +506,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             return toOutput(runContext, response);
         } finally {
             this.activeClient = null;
+            this.activeLogger = null;
             client.close();
         }
     }
@@ -515,21 +516,28 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         killed = true;
         var request = this.activeRequest;
         var client = this.activeClient;
+        var logger = this.activeLogger;
         try {
             if (request != null) {
                 request.cancel(true);
             }
         } finally {
             if (client != null) {
-                client.close();
+                try {
+                    client.close();
+                } catch (Exception e) {
+                    if (logger != null) {
+                        logger.warn("Unable to close Anthropic client while killing the task ({}).", e.getClass().getSimpleName());
+                    }
+                }
             }
         }
     }
 
-    private Message streamResponse(RunContext runContext, AnthropicClient client, MessageCreateParams params) throws Exception {
+    private Message requestResponse(RunContext runContext, AnthropicClient client, MessageCreateParams params, boolean rStream) throws Exception {
         // Closing the SDK reader can block on its read lock; interrupt a virtual thread to unblock the socket first.
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var request = executor.submit(() -> consumeStream(runContext, client, params));
+            var request = executor.submit(() -> rStream ? consumeStream(runContext, client, params) : client.messages().create(params));
             this.activeRequest = request;
             try {
                 if (killed) {
@@ -575,7 +583,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         }
     }
 
-    MessageCreateParams createParams(RunContext runContext) throws Exception {
+    private MessageCreateParams createParams(RunContext runContext) throws Exception {
         var rModel = runContext.render(model).as(String.class).filter(value -> !value.isBlank())
             .orElseThrow(() -> new IllegalArgumentException("model is required"));
         var rMaxTokens = runContext.render(maxTokens).as(Long.class).orElse(1024L);
@@ -859,25 +867,25 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     }
 
     public enum ContentBlockType {
-        @JsonProperty("text")
+        @JsonAlias("text")
         TEXT,
-        @JsonProperty("image")
+        @JsonAlias("image")
         IMAGE,
-        @JsonProperty("document")
+        @JsonAlias("document")
         DOCUMENT
     }
 
     public enum ContentSourceType {
-        @JsonProperty("url")
+        @JsonAlias("url")
         URL,
-        @JsonProperty("base64")
+        @JsonAlias("base64")
         BASE64,
-        @JsonProperty("file")
+        @JsonAlias("file")
         FILE
     }
 
     public enum CacheControl {
-        @JsonProperty("ephemeral")
+        @JsonAlias("ephemeral")
         EPHEMERAL
     }
 
