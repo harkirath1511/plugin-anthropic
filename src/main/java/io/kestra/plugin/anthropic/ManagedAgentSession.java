@@ -253,7 +253,7 @@ public class ManagedAgentSession extends AbstractAnthropic implements RunnableTa
         }
     }
 
-    protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws Exception {
+    protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws IllegalVariableEvaluationException {
         return buildClient(runContext, rApiKey);
     }
 

@@ -304,7 +304,7 @@ class ManagedAgentSessionTest {
         private String baseUrl;
 
         @Override
-        protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws Exception {
+        protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) {
             return AnthropicOkHttpClient.builder()
                 .apiKey(rApiKey)
                 .baseUrl(baseUrl)

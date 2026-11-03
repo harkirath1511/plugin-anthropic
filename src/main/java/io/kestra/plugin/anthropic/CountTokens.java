@@ -8,6 +8,7 @@ import com.anthropic.models.messages.MessageCountTokensTool;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 
+import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Metric;
 import io.kestra.core.models.annotations.Plugin;
@@ -217,7 +218,7 @@ public class CountTokens extends AbstractAnthropic implements RunnableTask<Count
         }
     }
 
-    protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws Exception {
+    protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws IllegalVariableEvaluationException {
         return buildClient(runContext, rApiKey);
     }
 
