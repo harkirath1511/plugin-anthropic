@@ -8,6 +8,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import org.slf4j.Logger;
+
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.helpers.MessageAccumulator;
 import com.anthropic.models.messages.Base64ImageSource;
@@ -256,20 +258,20 @@ import lombok.experimental.SuperBuilder;
                     maxTokens: 2048
                     systemPromptBlocks:
                       - text: "Analyze the supplied sources and cite evidence."
-                        cacheControl: ephemeral
+                        cacheControl: EPHEMERAL
                     messages:
                       - type: USER
-                        cacheControl: ephemeral
+                        cacheControl: EPHEMERAL
                         content:
-                          - type: text
+                          - type: TEXT
                             text: "Compare the image with the report."
-                          - type: image
+                          - type: IMAGE
                             source:
-                              type: url
+                              type: URL
                               url: https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg
-                          - type: document
+                          - type: DOCUMENT
                             source:
-                              type: url
+                              type: URL
                               url: https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf
                             title: Report
                             citations:
@@ -302,25 +304,25 @@ import lombok.experimental.SuperBuilder;
                     messages:
                       - type: USER
                         content:
-                          - type: text
+                          - type: TEXT
                             text: "Summarize these sources. File IDs come from UploadFile."
-                          - type: image
+                          - type: IMAGE
                             source:
-                              type: base64
+                              type: BASE64
                               mediaType: image/png
                               data: "{{ inputs.image_base64 }}"
-                          - type: document
+                          - type: DOCUMENT
                             source:
-                              type: base64
+                              type: BASE64
                               mediaType: application/pdf
                               data: "{{ inputs.pdf_base64 }}"
-                          - type: image
+                          - type: IMAGE
                             source:
-                              type: file
+                              type: FILE
                               fileId: "{{ inputs.image_file_id }}"
-                          - type: document
+                          - type: DOCUMENT
                             source:
-                              type: file
+                              type: FILE
                               fileId: "{{ inputs.pdf_file_id }}"
                 """
         ),
@@ -342,7 +344,7 @@ import lombok.experimental.SuperBuilder;
                     tools:
                       - name: extract_name
                         description: Extract a person's name
-                        cacheControl: ephemeral
+                        cacheControl: EPHEMERAL
                         inputSchema:
                           type: object
                           properties:
@@ -483,7 +485,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     @JsonIgnore
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
-    private transient volatile org.slf4j.Logger activeLogger;
+    private transient volatile Logger activeLogger;
 
     @Override
     public Output run(RunContext runContext) throws Exception {
@@ -535,7 +537,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     }
 
     private Message requestResponse(RunContext runContext, AnthropicClient client, MessageCreateParams params, boolean rStream) throws Exception {
-        // Closing the SDK reader can block on its read lock; interrupt a virtual thread to unblock the socket first.
+        // Closing the SDK reader can block on its read lock, so interrupt the virtual thread first to unblock the socket.
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var request = executor.submit(() -> rStream ? consumeStream(runContext, client, params) : client.messages().create(params));
             this.activeRequest = request;

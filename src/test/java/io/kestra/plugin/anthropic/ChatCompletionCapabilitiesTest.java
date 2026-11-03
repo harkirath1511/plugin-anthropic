@@ -4,6 +4,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -89,7 +90,7 @@ class ChatCompletionCapabilitiesTest {
             exchange.close();
         });
         server.start();
-        baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        baseUrl = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
     }
 
     @AfterEach
@@ -224,7 +225,7 @@ class ChatCompletionCapabilitiesTest {
                 .tools(Property.ofValue(List.of(new ChatCompletion.Tool("extract", null, Map.of("type", "object")))))
                 .build().run(runContextFactory.of());
             var request = requests.getLast();
-            assertThat(request.path("tool_choice").path("type").asText(), is(choice.name().toLowerCase(java.util.Locale.ROOT)));
+            assertThat(request.path("tool_choice").path("type").asText(), is(choice.name().toLowerCase(Locale.ROOT)));
             if (choice == ChatCompletion.ToolChoice.TOOL) {
                 assertThat(request.path("tool_choice").path("name").asText(), is("extract"));
             }
@@ -298,7 +299,7 @@ class ChatCompletionCapabilitiesTest {
         for (int i = examples.length - 4; i < examples.length; i++) {
             var flow = JacksonMapper.ofYaml().readTree(String.join("\n", examples[i].code()));
             var taskNode = (ObjectNode) flow.path("tasks").path(0);
-            taskNode.put("id", "example_" + UUID.randomUUID().toString().replace("-", ""));
+            taskNode.put("id", "example_%s".formatted(UUID.randomUUID().toString().replace("-", "")));
             taskNode.put("apiKey", "test-key");
             taskNode.put("baseUrl", baseUrl);
             taskNode.put("maxRetries", 0);
@@ -320,7 +321,7 @@ class ChatCompletionCapabilitiesTest {
     @Test
     void shouldAccumulateStreamedTextThinkingToolsCitationsAndUsage() throws Exception {
         contentType = "text/event-stream";
-        response = event("message_start", "{\"type\":\"message_start\",\"message\":" + message("[]") + "}")
+        response = event("message_start", "{\"type\":\"message_start\",\"message\":%s}".formatted(message("[]")))
             + event("content_block_start", "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}")
             + delta(0, "{\"type\":\"thinking_delta\",\"thinking\":\"Reason\"}")
             + delta(0, "{\"type\":\"signature_delta\",\"signature\":\"sig\"}")
@@ -354,7 +355,7 @@ class ChatCompletionCapabilitiesTest {
     @Test
     void shouldFailOnIncompleteStream() {
         contentType = "text/event-stream";
-        response = event("message_start", "{\"type\":\"message_start\",\"message\":" + message("[]") + "}");
+        response = event("message_start", "{\"type\":\"message_start\",\"message\":%s}".formatted(message("[]")));
         assertThrows(IllegalStateException.class, () -> task().stream(Property.ofValue(true)).build().run(runContextFactory.of()));
     }
 
@@ -490,11 +491,11 @@ class ChatCompletionCapabilitiesTest {
         }
         for (var type : ChatCompletion.ContentBlockType.values()) {
             assertThat(mapper.readValue(type.name(), ChatCompletion.ContentBlockType.class), is(type));
-            assertThat(mapper.readValue(type.name().toLowerCase(java.util.Locale.ROOT), ChatCompletion.ContentBlockType.class), is(type));
+            assertThat(mapper.readValue(type.name().toLowerCase(Locale.ROOT), ChatCompletion.ContentBlockType.class), is(type));
         }
         for (var type : ChatCompletion.ContentSourceType.values()) {
             assertThat(mapper.readValue(type.name(), ChatCompletion.ContentSourceType.class), is(type));
-            assertThat(mapper.readValue(type.name().toLowerCase(java.util.Locale.ROOT), ChatCompletion.ContentSourceType.class), is(type));
+            assertThat(mapper.readValue(type.name().toLowerCase(Locale.ROOT), ChatCompletion.ContentSourceType.class), is(type));
         }
     }
 
@@ -521,7 +522,7 @@ class ChatCompletionCapabilitiesTest {
     }
 
     private static String textStreamStart() {
-        return event("message_start", "{\"type\":\"message_start\",\"message\":" + message("[]") + "}")
+        return event("message_start", "{\"type\":\"message_start\",\"message\":%s}".formatted(message("[]")))
             + event("content_block_start", "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}");
     }
 
@@ -536,15 +537,15 @@ class ChatCompletionCapabilitiesTest {
     }
 
     private ChatCompletion.ChatCompletionBuilder<?, ?> task() {
-        return ChatCompletion.builder().id("chat_" + UUID.randomUUID().toString().replace("-", ""))
+        return ChatCompletion.builder().id("chat_%s".formatted(UUID.randomUUID().toString().replace("-", "")))
             .apiKey(Property.ofValue("test-key")).baseUrl(Property.ofValue(baseUrl)).maxRetries(Property.ofValue(0))
             .model(Property.ofValue("claude-sonnet-4-6"))
             .messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, "Hello"))));
     }
 
     private static String message(String content) {
-        return "{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"content\":" + content
-            + ",\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_creation_input_tokens\":3,\"cache_read_input_tokens\":4}}";
+        return "{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"content\":%s,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_creation_input_tokens\":3,\"cache_read_input_tokens\":4}}"
+            .formatted(content);
     }
 
     private static <T> Property<T> dynamic(Object value) throws Exception {
@@ -552,10 +553,10 @@ class ChatCompletionCapabilitiesTest {
     }
 
     private static String event(String type, String data) {
-        return "event: " + type + "\ndata: " + data + "\n\n";
+        return "event: %s\ndata: %s\n\n".formatted(type, data);
     }
 
     private static String delta(int index, String delta) {
-        return event("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":" + index + ",\"delta\":" + delta + "}");
+        return event("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":%d,\"delta\":%s}".formatted(index, delta));
     }
 }

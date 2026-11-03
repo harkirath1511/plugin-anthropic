@@ -216,7 +216,7 @@ public class CountTokens extends AbstractAnthropic implements RunnableTask<Count
         }
     }
 
-    protected AnthropicClient anthropicClient(io.kestra.core.runners.RunContext runContext, String rApiKey) throws Exception {
+    protected AnthropicClient anthropicClient(RunContext runContext, String rApiKey) throws Exception {
         return buildClient(runContext, rApiKey);
     }
 
