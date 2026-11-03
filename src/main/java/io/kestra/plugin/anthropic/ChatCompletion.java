@@ -390,7 +390,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
 
     @Schema(
         title = "Messages",
-        description = "Ordered chat turns; include at least one USER message. Content accepts a string or a list of TEXT, IMAGE, and DOCUMENT blocks. Image/PDF sources support URL, BASE64, and FILE (fileId), and FILE sources require the Files API beta in betas."
+        description = "Ordered chat turns. Include at least one USER message. Content accepts a string or a list of TEXT, IMAGE, and DOCUMENT blocks. Image/PDF sources support URL, BASE64, and FILE (fileId), and FILE sources require the Files API beta in betas."
     )
     @NotNull
     @PluginProperty(group = "main")
@@ -417,7 +417,8 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     private Property<@Min(1024) Integer> budgetTokens;
 
     @Schema(
-        title = "Tool choice", description = "AUTO lets Claude decide; ANY requires a tool; TOOL requires toolChoiceName; NONE disables tools. Forced tool use is incompatible with thinking."
+        title = "Tool choice",
+        description = "AUTO lets Claude decide, ANY requires a tool, TOOL requires toolChoiceName and NONE disables tools. Forced tool use is incompatible with thinking. Unset uses the API default (AUTO when tools are provided)."
     )
     @PluginProperty(group = "advanced")
     private Property<ToolChoice> toolChoice;
@@ -611,14 +612,14 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         if (rThinking) {
             var rBudgetTokens = runContext.render(budgetTokens).as(Integer.class)
                 .orElseThrow(() -> new IllegalArgumentException("budgetTokens is required when thinking is enabled"));
-            if (rBudgetTokens < 1024 || rBudgetTokens >= rMaxTokens) {
-                throw new IllegalArgumentException("budgetTokens must be at least 1024 and less than maxTokens");
+            if (rBudgetTokens >= rMaxTokens) {
+                throw new IllegalArgumentException("budgetTokens must be less than maxTokens.");
             }
             if (rToolChoice.filter(choice -> choice == ToolChoice.ANY || choice == ToolChoice.TOOL).isPresent()) {
                 throw new IllegalArgumentException("thinking only supports toolChoice AUTO or NONE");
             }
             if (rTemperature.filter(value -> Double.compare(value, 1.0) != 0).isPresent()) {
-                runContext.logger().warn("temperature is set to 1 because thinking is enabled; the configured temperature is ignored");
+                runContext.logger().warn("temperature is set to 1 because thinking is enabled. The configured temperature is ignored.");
             }
             paramsBuilder.thinking(ThinkingConfigEnabled.builder().budgetTokens(rBudgetTokens.longValue()).build()).temperature(1.0);
         }
@@ -917,7 +918,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     }
 
     @Builder
-    public record Metadata(@Schema(title = "User ID", description = "Opaque attribution identifier; do not include personal information.") String userId) {
+    public record Metadata(@Schema(title = "User ID", description = "Opaque attribution identifier. Do not include personal information.") String userId) {
     }
 
     @Builder

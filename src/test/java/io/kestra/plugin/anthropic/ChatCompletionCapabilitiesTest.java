@@ -28,8 +28,10 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.JacksonMapper;
+import io.kestra.core.utils.TestsUtils;
 
 import jakarta.inject.Inject;
+import jakarta.validation.ConstraintViolationException;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -237,12 +239,10 @@ class ChatCompletionCapabilitiesTest {
     @Test
     void shouldRejectInvalidOptionsBeforeCallingApi() {
         assertThrows(IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true)).build().run(runContextFactory.of()));
-        for (var budget : List.of(1, 4096)) {
-            assertThrows(
-                IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true))
-                    .budgetTokens(Property.ofValue(budget)).maxTokens(Property.ofValue(4096L)).build().run(runContextFactory.of())
-            );
-        }
+        assertThrows(
+            IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true))
+                .budgetTokens(Property.ofValue(4096)).maxTokens(Property.ofValue(4096L)).build().run(runContextFactory.of())
+        );
         assertThrows(
             IllegalArgumentException.class, () -> task().toolChoice(Property.ofValue(ChatCompletion.ToolChoice.TOOL))
                 .build().run(runContextFactory.of())
@@ -251,7 +251,6 @@ class ChatCompletionCapabilitiesTest {
             IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true)).budgetTokens(Property.ofValue(1024))
                 .maxTokens(Property.ofValue(4096L)).toolChoice(Property.ofValue(ChatCompletion.ToolChoice.ANY)).build().run(runContextFactory.of())
         );
-        assertThrows(IllegalArgumentException.class, () -> task().maxRetries(Property.ofValue(-1)).build().run(runContextFactory.of()));
         assertThrows(IllegalArgumentException.class, () -> task().readTimeout(Property.ofValue(Duration.ofSeconds(-1))).build().run(runContextFactory.of()));
         assertThat(requests, empty());
     }
@@ -386,7 +385,7 @@ class ChatCompletionCapabilitiesTest {
         }
         task().temperature(Property.ofValue(0.5)).build().run(context);
         assertThat(requests.getLast().path("temperature").asDouble(), is(0.5));
-        assertThat(warnings, contains("temperature is set to 1 because thinking is enabled; the configured temperature is ignored"));
+        assertThat(warnings, contains("temperature is set to 1 because thinking is enabled. The configured temperature is ignored."));
     }
 
     @Test
@@ -472,12 +471,15 @@ class ChatCompletionCapabilitiesTest {
     }
 
     @Test
-    void shouldRejectMaxRetriesAboveTheBound() {
-        var task = task().maxRetries(Property.ofValue(11)).build();
-
-        var e = assertThrows(IllegalArgumentException.class, () -> task.buildClient(runContextFactory.of(), "test-key"));
-
-        assertThat(e.getMessage(), is("maxRetries must be between 0 and 10."));
+    void shouldRejectOutOfBoundValuesThroughTaskValidation() {
+        for (var task : List.of(
+            task().type(ChatCompletion.class.getName()).maxRetries(Property.ofValue(11)).build(),
+            task().type(ChatCompletion.class.getName()).maxRetries(Property.ofValue(-1)).build(),
+            task().type(ChatCompletion.class.getName()).thinking(Property.ofValue(true)).budgetTokens(Property.ofValue(1)).maxTokens(Property.ofValue(4096L)).build()
+        )) {
+            assertThrows(ConstraintViolationException.class, () -> task.run(TestsUtils.mockRunContext(runContextFactory, task, Map.of())));
+        }
+        assertThat(requests, empty());
     }
 
     private void assertCancellation(boolean rStream, boolean failOnClose) throws Exception {

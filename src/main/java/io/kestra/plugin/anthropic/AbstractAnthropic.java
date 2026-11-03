@@ -84,9 +84,6 @@ public abstract class AbstractAnthropic extends Task {
             throw new IllegalArgumentException("readTimeout must be zero or a positive duration such as PT5M.");
         }
         var rMaxRetries = runContext.render(maxRetries).as(Integer.class).orElse(2);
-        if (rMaxRetries < 0 || rMaxRetries > 10) {
-            throw new IllegalArgumentException("maxRetries must be between 0 and 10.");
-        }
         builder.maxRetries(rMaxRetries);
         if (rConnectTimeout.isPresent() || rReadTimeout.isPresent()) {
             var timeout = Timeout.builder();
@@ -211,7 +208,7 @@ public abstract class AbstractAnthropic extends Task {
             return JacksonMapper.ofJson().readValue(json, new TypeReference<>() {
             });
         } catch (Exception e) {
-            runContext.logger().warn("Unable to convert Anthropic tool input to a JSON object; tool input will be null ({}).", e.getClass().getSimpleName());
+            runContext.logger().warn("Unable to convert Anthropic tool input to a JSON object, so the tool input is null ({}).", e.getClass().getSimpleName());
             return null;
         }
     }
