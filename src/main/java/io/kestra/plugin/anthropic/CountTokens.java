@@ -143,7 +143,10 @@ public class CountTokens extends AbstractAnthropic implements RunnableTask<Count
     @PluginProperty(group = "main")
     private Property<String> model;
 
-    @Schema(title = "Messages", description = "Ordered chat turns rendered from properties; include at least one USER message.")
+    @Schema(
+        title = "Messages",
+        description = "Ordered chat turns rendered from properties. Include at least one USER message. Content accepts text or TEXT, IMAGE and DOCUMENT blocks, without FILE sources."
+    )
     @NotNull
     @PluginProperty(group = "main")
     private Property<List<ChatCompletion.ChatMessage>> messages;

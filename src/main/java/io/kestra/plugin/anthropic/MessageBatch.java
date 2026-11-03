@@ -532,7 +532,7 @@ public class MessageBatch extends AbstractAnthropic implements RunnableTask<Mess
         @Valid
         @Schema(
             title = "Messages",
-            description = "Ordered chat turns for this request. Include at least one USER message."
+            description = "Ordered chat turns for this request. Include at least one USER message. Content accepts text or TEXT, IMAGE and DOCUMENT blocks, without FILE sources."
         ) List<ChatCompletion.ChatMessage> messages,
 
         @Min(1)

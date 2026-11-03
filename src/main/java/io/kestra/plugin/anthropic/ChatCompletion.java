@@ -709,12 +709,11 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         @Schema(title = "Cache control", description = "Optional ephemeral breakpoint applied to the final block of this message.") CacheControl cacheControl){
         // CountTokens and MessageBatch cannot send the Files API beta header that FILE sources need
         MessageParam toSdkMessageWithoutFileSources(String task) {
-            if (content instanceof List<?> values && blocks(values).stream().anyMatch(block -> block.source() != null && block.source().type() == ContentSourceType.FILE)) {
-                throw new IllegalArgumentException(
-                    "%s does not support FILE sources because it cannot send the Files API beta header. Use a URL or BASE64 source.".formatted(task)
-                );
-            }
-            return toSdkMessage();
+            return toSdkMessage(task);
+        }
+
+        MessageParam toSdkMessage() {
+            return toSdkMessage(null);
         }
 
         private static List<ContentBlock> blocks(List<?> values) {
@@ -738,7 +737,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             return "Message content block %d must be an object with type TEXT, IMAGE, or DOCUMENT.".formatted(index);
         }
 
-        MessageParam toSdkMessage() {
+        private MessageParam toSdkMessage(String taskWithoutFileSources) {
             if (type == null || content == null) {
                 throw new IllegalArgumentException("Each message must set type and content");
             }
@@ -752,7 +751,14 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             if (text != null) {
                 blocks.add(ContentBlockParam.ofText(TextBlockParam.builder().text(text).build()));
             } else if (content instanceof List<?> values && !values.isEmpty()) {
-                blocks(values).forEach(block -> blocks.add(block.toSdkBlock()));
+                for (var block : blocks(values)) {
+                    if (taskWithoutFileSources != null && block.source() != null && block.source().type() == ContentSourceType.FILE) {
+                        throw new IllegalArgumentException(
+                            "%s does not support FILE sources because it cannot send the Files API beta header. Use a URL or BASE64 source.".formatted(taskWithoutFileSources)
+                        );
+                    }
+                    blocks.add(block.toSdkBlock());
+                }
             } else {
                 throw new IllegalArgumentException("Message content must be text or a non-empty list of content blocks. Wrap a single block in a list.");
             }
