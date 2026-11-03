@@ -3,11 +3,13 @@ package io.kestra.plugin.anthropic;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.helpers.MessageAccumulator;
@@ -33,6 +35,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.JsonMappingException;
 
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Metric;
@@ -533,7 +536,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 if (e.getCause() instanceof Error error) {
                     throw error;
                 }
-                throw new IllegalStateException("Unable to consume Anthropic response stream", e.getCause());
+                throw new IllegalStateException("The Anthropic request failed.", e.getCause());
             } finally {
                 request.cancel(true);
             }
@@ -720,10 +723,19 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 try {
                     blocks.add(JacksonMapper.ofJson().convertValue(values.get(i), ContentBlock.class));
                 } catch (IllegalArgumentException e) {
-                    throw new IllegalArgumentException("Message content block %d must be an object with type TEXT, IMAGE, or DOCUMENT.".formatted(i), e);
+                    throw new IllegalArgumentException(blockError(i, e), e);
                 }
             }
             return blocks;
+        }
+
+        // names the rejected field, so a typo like `source: {type: URLL}` is not reported as a bad block type
+        private static String blockError(int index, IllegalArgumentException e) {
+            if (e.getCause() instanceof JsonMappingException mapping && !mapping.getPath().isEmpty()) {
+                var field = mapping.getPath().stream().map(JsonMappingException.Reference::getFieldName).filter(Objects::nonNull).collect(Collectors.joining("."));
+                return "Message content block %d has an invalid value for `%s`.".formatted(index, field);
+            }
+            return "Message content block %d must be an object with type TEXT, IMAGE, or DOCUMENT.".formatted(index);
         }
 
         MessageParam toSdkMessage() {

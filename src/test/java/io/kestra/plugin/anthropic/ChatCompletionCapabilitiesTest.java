@@ -298,7 +298,7 @@ class ChatCompletionCapabilitiesTest {
                 )
             )
         );
-        for (int i = examples.length - 4; i < examples.length; i++) {
+        for (var i = examples.length - 4; i < examples.length; i++) {
             var flow = JacksonMapper.ofYaml().readTree(String.join("\n", examples[i].code()));
             var taskNode = (ObjectNode) flow.path("tasks").path(0);
             taskNode.put("id", "example_%s".formatted(UUID.randomUUID().toString().replace("-", "")));
@@ -449,6 +449,16 @@ class ChatCompletionCapabilitiesTest {
         var e = assertThrows(IllegalArgumentException.class, message::toSdkMessage);
 
         assertThat(e.getMessage(), is("Message content block 0 must be an object with type TEXT, IMAGE, or DOCUMENT."));
+    }
+
+    @Test
+    void shouldNameTheInvalidFieldOfAContentBlock() {
+        var block = Map.of("type", "IMAGE", "source", Map.of("type", "URLL", "url", "https://example.com/a.png"));
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block), null);
+
+        var e = assertThrows(IllegalArgumentException.class, message::toSdkMessage);
+
+        assertThat(e.getMessage(), is("Message content block 0 has an invalid value for `source.type`."));
     }
 
     @Test

@@ -49,7 +49,10 @@ public abstract class AbstractAnthropic extends Task {
     @PluginProperty(secret = true, group = "main")
     protected Property<String> apiKey;
 
-    @Schema(title = "Base URL", description = "Optional Anthropic-compatible endpoint. Defaults to the SDK endpoint.")
+    @Schema(
+        title = "Base URL",
+        description = "Optional Anthropic-compatible endpoint. Defaults to the SDK endpoint. Requests, including the API key, are sent to this host, so set it with `forced: true` in plugin defaults when the API key comes from there."
+    )
     @PluginProperty(group = "connection")
     protected Property<String> baseUrl;
 
