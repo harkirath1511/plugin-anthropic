@@ -113,7 +113,7 @@ class ChatCompletionCapabilitiesTest {
         assertThat(output.getOutputText(), is("Hello"));
         assertThat(output.getStopReason(), is("end_turn"));
         assertThat(output.getThinking(), nullValue());
-        assertThat(output.getCitations(), nullValue());
+        assertThat(output.getCitations(), empty());
     }
 
     @Test

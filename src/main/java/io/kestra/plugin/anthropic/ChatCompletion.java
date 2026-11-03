@@ -329,7 +329,7 @@ import lombok.experimental.SuperBuilder;
                 """
         ),
         @Example(
-            title = "Select a tool and cache its definition through a custom endpoint",
+            title = "Select a tool, cache its definition and tune the client",
             full = true,
             code = """
                 id: anthropic_tool_choice
@@ -697,7 +697,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             .stopReason(stopReason(response))
             .stopSequence(response.stopSequence().orElse(null))
             .thinking(reasoning.isEmpty() ? null : reasoning.toString())
-            .citations(citations.isEmpty() ? null : List.copyOf(citations))
+            .citations(List.copyOf(citations))
             .cacheCreationInputTokens(response.usage().cacheCreationInputTokens().orElse(null))
             .cacheReadInputTokens(response.usage().cacheReadInputTokens().orElse(null))
             .build();

@@ -16,6 +16,7 @@ import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.Tool;
 import com.fasterxml.jackson.core.type.TypeReference;
 
+import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.executions.metrics.Counter;
 import io.kestra.core.models.property.Property;
@@ -72,7 +73,7 @@ public abstract class AbstractAnthropic extends Task {
     @Builder.Default
     protected Property<@Min(0) @Max(10) Integer> maxRetries = Property.ofValue(2);
 
-    protected AnthropicClient buildClient(RunContext runContext, String rApiKey) throws Exception {
+    protected AnthropicClient buildClient(RunContext runContext, String rApiKey) throws IllegalVariableEvaluationException {
         var builder = AnthropicOkHttpClient.builder().apiKey(rApiKey);
         runContext.render(baseUrl).as(String.class).ifPresent(builder::baseUrl);
         var rConnectTimeout = runContext.render(connectTimeout).as(Duration.class);
