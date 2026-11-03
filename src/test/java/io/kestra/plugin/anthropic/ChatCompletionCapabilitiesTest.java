@@ -204,7 +204,8 @@ class ChatCompletionCapabilitiesTest {
                         new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, "Cached", ChatCompletion.CacheControl.EPHEMERAL),
                         new ChatCompletion.ChatMessage(
                             ChatCompletion.ChatMessageType.ASSISTANT,
-                            List.of(ChatCompletion.ContentBlock.builder().type(ChatCompletion.ContentBlockType.TEXT).text("Reply").cacheControl(ChatCompletion.CacheControl.EPHEMERAL).build())
+                            List.of(ChatCompletion.ContentBlock.builder().type(ChatCompletion.ContentBlockType.TEXT).text("Reply").cacheControl(ChatCompletion.CacheControl.EPHEMERAL).build()),
+                            null
                         )
                     )
                 )
@@ -222,7 +223,7 @@ class ChatCompletionCapabilitiesTest {
         for (var choice : ChatCompletion.ToolChoice.values()) {
             task().toolChoice(Property.ofValue(choice)).toolChoiceName(Property.ofValue("extract"))
                 .serviceTier(Property.ofValue(ChatCompletion.ServiceTier.AUTO))
-                .tools(Property.ofValue(List.of(new ChatCompletion.Tool("extract", null, Map.of("type", "object")))))
+                .tools(Property.ofValue(List.of(new ChatCompletion.Tool("extract", null, Map.of("type", "object"), null))))
                 .build().run(runContextFactory.of());
             var request = requests.getLast();
             assertThat(request.path("tool_choice").path("type").asText(), is(choice.name().toLowerCase(Locale.ROOT)));
@@ -236,7 +237,7 @@ class ChatCompletionCapabilitiesTest {
     @Test
     void shouldRejectInvalidOptionsBeforeCallingApi() {
         assertThrows(IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true)).build().run(runContextFactory.of()));
-        for (int budget : List.of(1, 4096)) {
+        for (var budget : List.of(1, 4096)) {
             assertThrows(
                 IllegalArgumentException.class, () -> task().thinking(Property.ofValue(true))
                     .budgetTokens(Property.ofValue(budget)).maxTokens(Property.ofValue(4096L)).build().run(runContextFactory.of())
@@ -375,7 +376,7 @@ class ChatCompletionCapabilitiesTest {
     void shouldWarnOnlyWhenThinkingOverridesTemperature() throws Exception {
         var warnings = new CopyOnWriteArrayList<String>();
         var context = loggingContext(new CopyOnWriteArrayList<>(), warnings);
-        for (Double configured : new Double[] { null, 1.0, 0.5 }) {
+        for (var configured : new Double[] { null, 1.0, 0.5 }) {
             var builder = task().thinking(Property.ofValue(true)).budgetTokens(Property.ofValue(1024)).maxTokens(Property.ofValue(4096L));
             if (configured != null) {
                 builder.temperature(Property.ofValue(configured));
@@ -427,14 +428,14 @@ class ChatCompletionCapabilitiesTest {
 
     @Test
     void shouldSendAYamlScalarContentAsText() {
-        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, 42).toSdkMessage();
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, 42, null).toSdkMessage();
 
         assertThat(message.content().asString(), is("42"));
     }
 
     @Test
     void shouldRejectASingleBlockThatIsNotWrappedInAList() {
-        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, Map.of("type", "TEXT", "text", "hi"));
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, Map.of("type", "TEXT", "text", "hi"), null);
 
         var e = assertThrows(IllegalArgumentException.class, message::toSdkMessage);
 
@@ -442,9 +443,18 @@ class ChatCompletionCapabilitiesTest {
     }
 
     @Test
+    void shouldNameTheContentBlockThatIsNotAnObject() {
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of("hello"), null);
+
+        var e = assertThrows(IllegalArgumentException.class, message::toSdkMessage);
+
+        assertThat(e.getMessage(), is("Message content block 0 must be an object with type TEXT, IMAGE, or DOCUMENT."));
+    }
+
+    @Test
     void shouldRejectFileSourcesWhereTheBetaHeaderCannotBeSent() {
         var block = Map.of("type", "DOCUMENT", "source", Map.of("type", "FILE", "fileId", "file_123"));
-        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block));
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block), null);
 
         var e = assertThrows(IllegalArgumentException.class, () -> message.toSdkMessageWithoutFileSources("CountTokens"));
 
@@ -499,7 +509,7 @@ class ChatCompletionCapabilitiesTest {
     @Test
     void shouldRejectEnumTyposAndAcceptUppercaseAndLowercaseYamlValues() throws Exception {
         var mapper = JacksonMapper.ofYaml();
-        for (String invalid : List.of(
+        for (var invalid : List.of(
             "type: typo\ntext: hello",
             "type: image\nsource: {type: typo}",
             "type: text\ntext: hello\ncacheControl: typo"
@@ -509,7 +519,7 @@ class ChatCompletionCapabilitiesTest {
         assertThrows(Exception.class, () -> mapper.readValue("type: USER\ncontent: hello\ncacheControl: typo", ChatCompletion.ChatMessage.class));
         assertThrows(Exception.class, () -> mapper.readValue("text: hello\ncacheControl: typo", ChatCompletion.SystemPromptBlock.class));
         assertThrows(Exception.class, () -> mapper.readValue("name: extract\ncacheControl: typo", ChatCompletion.Tool.class));
-        for (String yaml : List.of(
+        for (var yaml : List.of(
             "type: IMAGE\nsource: {type: URL, url: 'https://example.com/image.png'}\ncacheControl: EPHEMERAL",
             "type: image\nsource: {type: url, url: 'https://example.com/image.png'}\ncacheControl: ephemeral"
         )) {
@@ -521,7 +531,7 @@ class ChatCompletionCapabilitiesTest {
             assertThat(serialized.path("type").asText(), is("IMAGE"));
             assertThat(serialized.path("source").path("type").asText(), is("URL"));
             assertThat(serialized.path("cacheControl").asText(), is("EPHEMERAL"));
-            task().messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block)))))
+            task().messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block), null))))
                 .build().run(runContextFactory.of());
             assertThat(requests.getLast().path("messages").path(0).path("content").path(0).path("type").asText(), is("image"));
         }
@@ -576,7 +586,7 @@ class ChatCompletionCapabilitiesTest {
         return ChatCompletion.builder().id("chat_%s".formatted(UUID.randomUUID().toString().replace("-", "")))
             .apiKey(Property.ofValue("test-key")).baseUrl(Property.ofValue(baseUrl)).maxRetries(Property.ofValue(0))
             .model(Property.ofValue("claude-sonnet-4-6"))
-            .messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, "Hello"))));
+            .messages(Property.ofValue(List.of(new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, "Hello", null))));
     }
 
     private static String message(String content) {

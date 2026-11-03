@@ -530,6 +530,9 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 if (e.getCause() instanceof Exception cause) {
                     throw cause;
                 }
+                if (e.getCause() instanceof Error error) {
+                    throw error;
+                }
                 throw new IllegalStateException("Unable to consume Anthropic response stream", e.getCause());
             } finally {
                 request.cancel(true);
@@ -701,23 +704,26 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 String.class, ContentBlock[].class }
         ) Object content,
         @Schema(title = "Cache control", description = "Optional ephemeral breakpoint applied to the final block of this message.") CacheControl cacheControl){
-        // keeps the constructor of the record before cacheControl was added
-        public ChatMessage(ChatMessageType type, Object content) {
-            this(type, content, null);
-        }
-
         // CountTokens and MessageBatch cannot send the Files API beta header that FILE sources need
         MessageParam toSdkMessageWithoutFileSources(String task) {
-            if (
-                content instanceof List<?> values && values.stream()
-                    .map(value -> JacksonMapper.ofJson().convertValue(value, ContentBlock.class))
-                    .anyMatch(block -> block.source() != null && block.source().type() == ContentSourceType.FILE)
-            ) {
+            if (content instanceof List<?> values && blocks(values).stream().anyMatch(block -> block.source() != null && block.source().type() == ContentSourceType.FILE)) {
                 throw new IllegalArgumentException(
                     "%s does not support FILE sources because it cannot send the Files API beta header. Use a URL or BASE64 source.".formatted(task)
                 );
             }
             return toSdkMessage();
+        }
+
+        private static List<ContentBlock> blocks(List<?> values) {
+            var blocks = new ArrayList<ContentBlock>(values.size());
+            for (var i = 0; i < values.size(); i++) {
+                try {
+                    blocks.add(JacksonMapper.ofJson().convertValue(values.get(i), ContentBlock.class));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("Message content block %d must be an object with type TEXT, IMAGE, or DOCUMENT.".formatted(i), e);
+                }
+            }
+            return blocks;
         }
 
         MessageParam toSdkMessage() {
@@ -734,7 +740,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             if (text != null) {
                 blocks.add(ContentBlockParam.ofText(TextBlockParam.builder().text(text).build()));
             } else if (content instanceof List<?> values && !values.isEmpty()) {
-                values.forEach(value -> blocks.add(JacksonMapper.ofJson().convertValue(value, ContentBlock.class).toSdkBlock()));
+                blocks(values).forEach(block -> blocks.add(block.toSdkBlock()));
             } else {
                 throw new IllegalArgumentException("Message content must be text or a non-empty list of content blocks. Wrap a single block in a list.");
             }
@@ -951,10 +957,6 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         @JsonAlias("input_schema")
         @Schema(title = "Input schema", description = "JSON Schema object defining the expected parameters for the tool.") Map<String, Object> inputSchema,
         @Schema(title = "Cache control", description = "Optional ephemeral cache breakpoint on this tool.") CacheControl cacheControl) implements ChatTool {
-        // keeps the constructor of the record before cacheControl was added
-        public Tool(String name, String description, Map<String, Object> inputSchema) {
-            this(name, description, inputSchema, null);
-        }
     }
 
     public enum BuiltInToolType {
