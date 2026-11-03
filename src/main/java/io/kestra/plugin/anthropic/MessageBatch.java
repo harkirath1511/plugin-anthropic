@@ -466,7 +466,7 @@ public class MessageBatch extends AbstractAnthropic implements RunnableTask<Mess
                         "Each message of request '" + request.customId() + "' must set both `type` and `content`."
                     );
                 }
-                return message.toSdkMessage();
+                return message.toSdkMessageWithoutFileSources("MessageBatch");
             })
             .toList();
     }

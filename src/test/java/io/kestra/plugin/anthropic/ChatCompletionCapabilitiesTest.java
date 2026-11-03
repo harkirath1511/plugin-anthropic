@@ -424,6 +424,32 @@ class ChatCompletionCapabilitiesTest {
         assertCancellation(false, true);
     }
 
+    @Test
+    void shouldSendAYamlScalarContentAsText() {
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, 42).toSdkMessage();
+
+        assertThat(message.content().asString(), is("42"));
+    }
+
+    @Test
+    void shouldRejectFileSourcesWhereTheBetaHeaderCannotBeSent() {
+        var block = Map.of("type", "DOCUMENT", "source", Map.of("type", "FILE", "fileId", "file_123"));
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block));
+
+        var e = assertThrows(IllegalArgumentException.class, () -> message.toSdkMessageWithoutFileSources("CountTokens"));
+
+        assertThat(e.getMessage(), containsString("CountTokens does not support FILE sources"));
+    }
+
+    @Test
+    void shouldRejectMaxRetriesAboveTheBound() {
+        var task = task().maxRetries(Property.ofValue(11)).build();
+
+        var e = assertThrows(IllegalArgumentException.class, () -> task.buildClient(runContextFactory.of(), "test-key"));
+
+        assertThat(e.getMessage(), is("maxRetries must be between 0 and 10."));
+    }
+
     private void assertCancellation(boolean rStream, boolean failOnClose) throws Exception {
         contentType = rStream ? "text/event-stream" : "application/json";
         streamRelease = new CountDownLatch(1);

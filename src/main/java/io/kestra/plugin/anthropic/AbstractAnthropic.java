@@ -24,6 +24,7 @@ import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
@@ -52,18 +53,21 @@ public abstract class AbstractAnthropic extends Task {
     @PluginProperty(group = "connection")
     protected Property<String> baseUrl;
 
-    @Schema(title = "Connect timeout", description = "Connection timeout as an ISO-8601 duration. Defaults to PT1M; zero disables the timeout.")
+    @Schema(title = "Connect timeout", description = "Connection timeout as an ISO-8601 duration. Defaults to PT1M, and zero disables it.")
     @PluginProperty(group = "connection")
     protected Property<Duration> connectTimeout;
 
-    @Schema(title = "Read timeout", description = "Maximum time between response packets as an ISO-8601 duration. Defaults to the SDK timeout (PT10M); zero disables the timeout.")
+    @Schema(
+        title = "Read timeout",
+        description = "Maximum time for a response as an ISO-8601 duration, both between packets and for the whole call. Defaults to the SDK timeout (PT10M), and zero disables it."
+    )
     @PluginProperty(group = "connection")
     protected Property<Duration> readTimeout;
 
-    @Schema(title = "Maximum retries", description = "SDK retries for transient errors. Defaults to 2; set 0 to disable. Must be non-negative.")
+    @Schema(title = "Maximum retries", description = "SDK retries for transient errors, between 0 and 10. Defaults to 2, and 0 disables them.")
     @PluginProperty(group = "reliability")
     @Builder.Default
-    protected Property<@Min(0) Integer> maxRetries = Property.ofValue(2);
+    protected Property<@Min(0) @Max(10) Integer> maxRetries = Property.ofValue(2);
 
     protected AnthropicClient buildClient(RunContext runContext, String rApiKey) throws Exception {
         var builder = AnthropicOkHttpClient.builder().apiKey(rApiKey);
@@ -74,14 +78,15 @@ public abstract class AbstractAnthropic extends Task {
             throw new IllegalArgumentException("connectTimeout and readTimeout must be non-negative durations");
         }
         var rMaxRetries = runContext.render(maxRetries).as(Integer.class).orElse(2);
-        if (rMaxRetries < 0) {
-            throw new IllegalArgumentException("maxRetries must be non-negative");
+        if (rMaxRetries < 0 || rMaxRetries > 10) {
+            throw new IllegalArgumentException("maxRetries must be between 0 and 10.");
         }
         builder.maxRetries(rMaxRetries);
         if (rConnectTimeout.isPresent() || rReadTimeout.isPresent()) {
             var timeout = Timeout.builder();
             rConnectTimeout.ifPresent(timeout::connect);
-            rReadTimeout.ifPresent(timeout::read);
+            // the SDK caps every call at its request timeout (PT10M), so a longer read timeout must raise it too
+            rReadTimeout.ifPresent(value -> timeout.read(value).request(value));
             builder.timeout(timeout.build());
         }
         return builder.build();

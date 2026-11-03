@@ -6,9 +6,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-
-import org.slf4j.Logger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.helpers.MessageAccumulator;
@@ -388,7 +387,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
 
     @Schema(
         title = "Messages",
-        description = "Ordered chat turns; include at least one USER message. Content accepts a string or a list of text, image, and document blocks. Image/PDF sources support url, base64, and file (fileId); file sources require the Files API beta in betas."
+        description = "Ordered chat turns; include at least one USER message. Content accepts a string or a list of TEXT, IMAGE, and DOCUMENT blocks. Image/PDF sources support URL, BASE64, and FILE (fileId), and FILE sources require the Files API beta in betas."
     )
     @NotNull
     @PluginProperty(group = "main")
@@ -398,7 +397,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     @PluginProperty(group = "advanced")
     private Property<String> system;
 
-    @Schema(title = "System prompt blocks", description = "Optional system blocks with text and cacheControl: ephemeral. Mutually exclusive with system.")
+    @Schema(title = "System prompt blocks", description = "Optional system blocks with text and cacheControl: EPHEMERAL. Mutually exclusive with system.")
     @PluginProperty(group = "advanced")
     private Property<List<SystemPromptBlock>> systemPromptBlocks;
 
@@ -470,22 +469,12 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     @JsonIgnore
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
-    private transient volatile AnthropicClient activeClient;
+    private final transient AtomicBoolean isKilled = new AtomicBoolean(false);
 
     @JsonIgnore
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
-    private transient volatile Future<Message> activeRequest;
-
-    @JsonIgnore
-    @ToString.Exclude
-    @EqualsAndHashCode.Exclude
-    private transient volatile boolean killed;
-
-    @JsonIgnore
-    @ToString.Exclude
-    @EqualsAndHashCode.Exclude
-    private transient volatile Logger activeLogger;
+    private final transient AtomicReference<Runnable> killable = new AtomicReference<>();
 
     @Override
     public Output run(RunContext runContext) throws Exception {
@@ -494,44 +483,25 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             .orElseThrow(() -> new IllegalArgumentException("apiKey is required"));
         var rStream = runContext.render(stream).as(Boolean.class).orElse(false);
         var client = buildClient(runContext, rApiKey);
-        this.activeLogger = runContext.logger();
-        this.activeClient = client;
         try {
-            if (killed) {
-                throw new InterruptedException("Chat completion was killed");
-            }
             var response = requestResponse(runContext, client, params, rStream);
-            if (killed) {
+            if (isKilled.get()) {
                 throw new InterruptedException("Chat completion was killed");
             }
             sendMetrics(runContext, response);
             return toOutput(runContext, response);
         } finally {
-            this.activeClient = null;
-            this.activeLogger = null;
+            killable.set(null);
             client.close();
         }
     }
 
     @Override
     public void kill() {
-        killed = true;
-        var request = this.activeRequest;
-        var client = this.activeClient;
-        var logger = this.activeLogger;
-        try {
-            if (request != null) {
-                request.cancel(true);
-            }
-        } finally {
-            if (client != null) {
-                try {
-                    client.close();
-                } catch (Exception e) {
-                    if (logger != null) {
-                        logger.warn("Unable to close Anthropic client while killing the task ({}).", e.getClass().getSimpleName());
-                    }
-                }
+        if (isKilled.compareAndSet(false, true)) {
+            var action = killable.get();
+            if (action != null) {
+                action.run();
             }
         }
     }
@@ -540,9 +510,19 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         // Closing the SDK reader can block on its read lock, so interrupt the virtual thread first to unblock the socket.
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var request = executor.submit(() -> rStream ? consumeStream(runContext, client, params) : client.messages().create(params));
-            this.activeRequest = request;
+            var logger = runContext.logger();
+            killable.set(() ->
+            {
+                request.cancel(true);
+                try {
+                    client.close();
+                } catch (RuntimeException e) {
+                    logger.warn("Unable to close Anthropic client while killing the task ({}).", e.getClass().getSimpleName());
+                }
+            });
             try {
-                if (killed) {
+                // a kill that arrived before the request was published still cancels it
+                if (isKilled.get()) {
                     request.cancel(true);
                 }
                 return request.get();
@@ -553,7 +533,6 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 throw new IllegalStateException("Unable to consume Anthropic response stream", e.getCause());
             } finally {
                 request.cancel(true);
-                this.activeRequest = null;
             }
         }
     }
@@ -662,7 +641,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         });
         runContext.render(serviceTier).as(ServiceTier.class).ifPresent(
             value -> paramsBuilder.serviceTier(
-                MessageCreateParams.ServiceTier.of(value == ServiceTier.AUTO ? "auto" : "standard_only")
+                value == ServiceTier.AUTO ? MessageCreateParams.ServiceTier.AUTO : MessageCreateParams.ServiceTier.STANDARD_ONLY
             )
         );
         var rBetas = runContext.render(betas).asList(String.class);
@@ -694,7 +673,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         var reasoning = new StringBuilder();
         var citations = new ArrayList<Citation>();
         for (var block : response.content()) {
-            block.thinking().ifPresent(value -> reasoning.append(value.thinking()));
+            block.thinking().ifPresent(value -> reasoning.append(reasoning.isEmpty() ? "" : "\n\n").append(value.thinking()));
             if (block.text().isPresent()) {
                 for (var citation : block.text().get().citations().orElse(List.of())) {
                     citations.add(JacksonMapper.ofJson().readValue(JacksonMapper.ofJson().writeValueAsString(citation), Citation.class));
@@ -722,8 +701,23 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 String.class, ContentBlock[].class }
         ) Object content,
         @Schema(title = "Cache control", description = "Optional ephemeral breakpoint applied to the final block of this message.") CacheControl cacheControl){
+        // keeps the constructor of the record before cacheControl was added
         public ChatMessage(ChatMessageType type, Object content) {
             this(type, content, null);
+        }
+
+        // CountTokens and MessageBatch cannot send the Files API beta header that FILE sources need
+        MessageParam toSdkMessageWithoutFileSources(String task) {
+            if (
+                content instanceof List<?> values && values.stream()
+                    .map(value -> JacksonMapper.ofJson().convertValue(value, ContentBlock.class))
+                    .anyMatch(block -> block.source() != null && block.source().type() == ContentSourceType.FILE)
+            ) {
+                throw new IllegalArgumentException(
+                    "%s does not support FILE sources because it cannot send the Files API beta header. Use a URL or BASE64 source.".formatted(task)
+                );
+            }
+            return toSdkMessage();
         }
 
         MessageParam toSdkMessage() {
@@ -731,16 +725,18 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 throw new IllegalArgumentException("Each message must set type and content");
             }
             var builder = MessageParam.builder().role(MessageParam.Role.of(type.role()));
-            if (content instanceof String text && cacheControl == null) {
+            // a YAML scalar such as `content: 42` was a string before content accepted blocks
+            var text = content instanceof List<?> ? null : String.valueOf(content);
+            if (text != null && cacheControl == null) {
                 return builder.content(text).build();
             }
             var blocks = new ArrayList<ContentBlockParam>();
-            if (content instanceof String text) {
+            if (text != null) {
                 blocks.add(ContentBlockParam.ofText(TextBlockParam.builder().text(text).build()));
             } else if (content instanceof List<?> values && !values.isEmpty()) {
                 values.forEach(value -> blocks.add(JacksonMapper.ofJson().convertValue(value, ContentBlock.class).toSdkBlock()));
             } else {
-                throw new IllegalArgumentException("Message content must be a string or a non-empty list of content blocks");
+                throw new IllegalArgumentException("Message content must be text or a non-empty list of content blocks.");
             }
             if (cacheControl != null) {
                 // A message-level breakpoint belongs on its final content block.
@@ -779,7 +775,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
 
     @Builder
     public record ContentSource(
-        @Schema(title = "Source type", description = "url, base64, or file.") ContentSourceType type,
+        @Schema(title = "Source type", description = "URL, BASE64, or FILE.") ContentSourceType type,
         @Schema(title = "Source URL", description = "Public image or PDF URL when type is url.") String url,
         @Schema(title = "Base64 data", description = "Base64-encoded image or PDF bytes when type is base64.") String data,
         @JsonAlias("media_type") @Schema(title = "Media type", description = "Image MIME type or application/pdf for base64 sources.") String mediaType,
@@ -788,7 +784,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
 
     @Builder
     public record ContentBlock(
-        @Schema(title = "Block type", description = "text, image, or document.") ContentBlockType type,
+        @Schema(title = "Block type", description = "TEXT, IMAGE, or DOCUMENT.") ContentBlockType type,
         @Schema(title = "Text", description = "Text content when type is text.") String text,
         @Schema(title = "Source", description = "Image or PDF source.") ContentSource source,
         @Schema(title = "Document title") String title,
@@ -797,7 +793,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         @Schema(title = "Cache control", description = "Optional ephemeral cache breakpoint on this block.") CacheControl cacheControl) {
         ContentBlockParam toSdkBlock() {
             if (type == null) {
-                throw new IllegalArgumentException("Content block type is required: text, image, or document");
+                throw new IllegalArgumentException("Content block type is required: TEXT, IMAGE, or DOCUMENT.");
             }
             var cache = cacheControl == null ? null : ChatCompletion.cacheControl(cacheControl);
             if (type == ContentBlockType.TEXT) {
@@ -811,7 +807,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 return ContentBlockParam.ofText(builder.build());
             }
             if (source == null || source.type() == null) {
-                throw new IllegalArgumentException("Image and document blocks require a source with type url, base64, or file");
+                throw new IllegalArgumentException("Image and document blocks require a source with type URL, BASE64, or FILE.");
             }
             if (type == ContentBlockType.IMAGE) {
                 var builder = ImageBlockParam.builder();
@@ -850,7 +846,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 }
                 return ContentBlockParam.ofDocument(builder.build());
             }
-            throw new IllegalArgumentException("Content block type must be text, image, or document");
+            throw new IllegalArgumentException("Content block type must be TEXT, IMAGE, or DOCUMENT.");
         }
     }
 
@@ -955,6 +951,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
         @JsonAlias("input_schema")
         @Schema(title = "Input schema", description = "JSON Schema object defining the expected parameters for the tool.") Map<String, Object> inputSchema,
         @Schema(title = "Cache control", description = "Optional ephemeral cache breakpoint on this tool.") CacheControl cacheControl) implements ChatTool {
+        // keeps the constructor of the record before cacheControl was added
         public Tool(String name, String description, Map<String, Object> inputSchema) {
             this(name, description, inputSchema, null);
         }
