@@ -185,7 +185,7 @@ public class CountTokens extends AbstractAnthropic implements RunnableTask<Count
         var client = anthropicClient(runContext, rApiKey);
         try {
             List<MessageParam> messageParams = rMessages.stream()
-                .map(message -> message.toSdkMessageWithoutFileSources("CountTokens"))
+                .map(message -> message.toSdkMessage("CountTokens"))
                 .toList();
 
             var paramsBuilder = MessageCountTokensParams.builder()

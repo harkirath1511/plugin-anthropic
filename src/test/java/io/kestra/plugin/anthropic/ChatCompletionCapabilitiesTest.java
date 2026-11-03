@@ -465,7 +465,7 @@ class ChatCompletionCapabilitiesTest {
         var block = Map.of("type", "DOCUMENT", "source", Map.of("type", "FILE", "fileId", "file_123"));
         var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, List.of(block), null);
 
-        var e = assertThrows(IllegalArgumentException.class, () -> message.toSdkMessageWithoutFileSources("CountTokens"));
+        var e = assertThrows(IllegalArgumentException.class, () -> message.toSdkMessage("CountTokens"));
 
         assertThat(e.getMessage(), containsString("CountTokens does not support FILE sources"));
     }

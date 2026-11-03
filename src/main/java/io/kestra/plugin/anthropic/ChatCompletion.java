@@ -562,9 +562,12 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     }
 
     private static void logStreamText(RunContext runContext, StringBuilder pendingText, String text) {
+        // only the appended text can hold a new newline, so long lines are not rescanned on every delta
+        var from = pendingText.length();
         pendingText.append(text);
         int newline;
-        while ((newline = pendingText.indexOf("\n")) >= 0) {
+        while ((newline = pendingText.indexOf("\n", from)) >= 0) {
+            from = 0;
             var end = newline > 0 && pendingText.charAt(newline - 1) == '\r' ? newline - 1 : newline;
             runContext.logger().info("{}", pendingText.substring(0, end));
             pendingText.delete(0, newline + 1);
@@ -708,11 +711,6 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
                 String.class, ContentBlock[].class }
         ) Object content,
         @Schema(title = "Cache control", description = "Optional ephemeral breakpoint applied to the final block of this message.") CacheControl cacheControl){
-        // CountTokens and MessageBatch cannot send the Files API beta header that FILE sources need
-        MessageParam toSdkMessageWithoutFileSources(String task) {
-            return toSdkMessage(task);
-        }
-
         MessageParam toSdkMessage() {
             return toSdkMessage(null);
         }
@@ -738,7 +736,8 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             return "Message content block %d must be an object with type TEXT, IMAGE, or DOCUMENT.".formatted(index);
         }
 
-        private MessageParam toSdkMessage(String taskWithoutFileSources) {
+        // CountTokens and MessageBatch pass their name, they cannot send the Files API beta header that FILE sources need
+        MessageParam toSdkMessage(String taskWithoutFileSources) {
             if (type == null || content == null) {
                 throw new IllegalArgumentException("Each message must set type and content");
             }
