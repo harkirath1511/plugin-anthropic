@@ -280,6 +280,7 @@ class ChatCompletionCapabilitiesTest {
             {
                 assertThat(options.timeout().connect(), is(Duration.ofSeconds(2)));
                 assertThat(options.timeout().read(), is(Duration.ofSeconds(3)));
+                assertThat(options.timeout().request(), is(Duration.ofSeconds(3)));
             });
         } finally {
             client.close();
@@ -429,6 +430,15 @@ class ChatCompletionCapabilitiesTest {
         var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, 42).toSdkMessage();
 
         assertThat(message.content().asString(), is("42"));
+    }
+
+    @Test
+    void shouldRejectASingleBlockThatIsNotWrappedInAList() {
+        var message = new ChatCompletion.ChatMessage(ChatCompletion.ChatMessageType.USER, Map.of("type", "TEXT", "text", "hi"));
+
+        var e = assertThrows(IllegalArgumentException.class, message::toSdkMessage);
+
+        assertThat(e.getMessage(), containsString("Wrap a single block in a list"));
     }
 
     @Test

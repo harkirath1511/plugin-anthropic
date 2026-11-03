@@ -74,8 +74,11 @@ public abstract class AbstractAnthropic extends Task {
         runContext.render(baseUrl).as(String.class).ifPresent(builder::baseUrl);
         var rConnectTimeout = runContext.render(connectTimeout).as(Duration.class);
         var rReadTimeout = runContext.render(readTimeout).as(Duration.class);
-        if (rConnectTimeout.filter(Duration::isNegative).isPresent() || rReadTimeout.filter(Duration::isNegative).isPresent()) {
-            throw new IllegalArgumentException("connectTimeout and readTimeout must be non-negative durations");
+        if (rConnectTimeout.filter(Duration::isNegative).isPresent()) {
+            throw new IllegalArgumentException("connectTimeout must be zero or a positive duration such as PT30S.");
+        }
+        if (rReadTimeout.filter(Duration::isNegative).isPresent()) {
+            throw new IllegalArgumentException("readTimeout must be zero or a positive duration such as PT5M.");
         }
         var rMaxRetries = runContext.render(maxRetries).as(Integer.class).orElse(2);
         if (rMaxRetries < 0 || rMaxRetries > 10) {

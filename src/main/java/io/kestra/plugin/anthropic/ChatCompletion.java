@@ -676,7 +676,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             block.thinking().ifPresent(value -> reasoning.append(reasoning.isEmpty() ? "" : "\n\n").append(value.thinking()));
             if (block.text().isPresent()) {
                 for (var citation : block.text().get().citations().orElse(List.of())) {
-                    citations.add(JacksonMapper.ofJson().readValue(JacksonMapper.ofJson().writeValueAsString(citation), Citation.class));
+                    citations.add(JacksonMapper.ofJson().convertValue(citation, Citation.class));
                 }
             }
         }
@@ -726,7 +726,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             }
             var builder = MessageParam.builder().role(MessageParam.Role.of(type.role()));
             // a YAML scalar such as `content: 42` was a string before content accepted blocks
-            var text = content instanceof List<?> ? null : String.valueOf(content);
+            var text = content instanceof CharSequence || content instanceof Number || content instanceof Boolean ? String.valueOf(content) : null;
             if (text != null && cacheControl == null) {
                 return builder.content(text).build();
             }
@@ -736,7 +736,7 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
             } else if (content instanceof List<?> values && !values.isEmpty()) {
                 values.forEach(value -> blocks.add(JacksonMapper.ofJson().convertValue(value, ContentBlock.class).toSdkBlock()));
             } else {
-                throw new IllegalArgumentException("Message content must be text or a non-empty list of content blocks.");
+                throw new IllegalArgumentException("Message content must be text or a non-empty list of content blocks. Wrap a single block in a list.");
             }
             if (cacheControl != null) {
                 // A message-level breakpoint belongs on its final content block.
@@ -776,16 +776,16 @@ public class ChatCompletion extends AbstractAnthropicChat implements RunnableTas
     @Builder
     public record ContentSource(
         @Schema(title = "Source type", description = "URL, BASE64, or FILE.") ContentSourceType type,
-        @Schema(title = "Source URL", description = "Public image or PDF URL when type is url.") String url,
-        @Schema(title = "Base64 data", description = "Base64-encoded image or PDF bytes when type is base64.") String data,
-        @JsonAlias("media_type") @Schema(title = "Media type", description = "Image MIME type or application/pdf for base64 sources.") String mediaType,
-        @JsonAlias("file_id") @Schema(title = "File ID", description = "Anthropic file ID from UploadFile when type is file.") String fileId) {
+        @Schema(title = "Source URL", description = "Public image or PDF URL when type is URL.") String url,
+        @Schema(title = "Base64 data", description = "Base64-encoded image or PDF bytes when type is BASE64.") String data,
+        @JsonAlias("media_type") @Schema(title = "Media type", description = "Image MIME type or application/pdf for BASE64 sources.") String mediaType,
+        @JsonAlias("file_id") @Schema(title = "File ID", description = "Anthropic file ID from UploadFile when type is FILE.") String fileId) {
     }
 
     @Builder
     public record ContentBlock(
         @Schema(title = "Block type", description = "TEXT, IMAGE, or DOCUMENT.") ContentBlockType type,
-        @Schema(title = "Text", description = "Text content when type is text.") String text,
+        @Schema(title = "Text", description = "Text content when type is TEXT.") String text,
         @Schema(title = "Source", description = "Image or PDF source.") ContentSource source,
         @Schema(title = "Document title") String title,
         @Schema(title = "Document context", description = "Optional context about the document.") String context,
